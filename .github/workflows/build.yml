@@ -5,6 +5,9 @@ on:
   push:
     branches: [main, master]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,6 +26,17 @@ jobs:
         ROOT=$(dirname "$(dirname "$(dirname "$GRADLE")")")
         echo "Project root: $ROOT"
         echo "ROOT=$ROOT" >> $GITHUB_ENV
+
+    - name: Read version from version.json
+      run: |
+        VERSION=$(jq -r '.version' "$ROOT/version.json")
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+          echo "version.json missing or has no \"version\" field"
+          exit 1
+        fi
+        echo "Version: $VERSION"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        sed -i "s/versionName = \".*\"/versionName = \"$VERSION\"/" "$ROOT/V2rayNG/app/build.gradle.kts"
 
     - name: Fetch hev-socks5-tunnel
       run: |
@@ -74,3 +88,25 @@ jobs:
       with:
         name: s0h1-apk
         path: ${{ env.ROOT }}/V2rayNG/app/build/outputs/apk/playstore/debug/*.apk
+
+    - name: Check if release already exists
+      id: rel
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "Release v$VERSION already exists, skipping publish. Bump version.json for a new release."
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Publish GitHub Release
+      if: steps.rel.outputs.exists == 'false' && github.event_name == 'push'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ env.VERSION }}
+        name: v${{ env.VERSION }}
+        target_commitish: ${{ github.sha }}
+        files: ${{ env.ROOT }}/V2rayNG/app/build/outputs/apk/playstore/debug/*.apk
+        generate_release_notes: true
