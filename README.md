@@ -1,1 +1,1 @@
-# Local_vpn
+# S0H1 VPN
