@@ -1,0 +1,76 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Unzip project and locate it
+      run: |
+        unzip -q project.zip
+        GRADLE=$(find . -path "*/V2rayNG/app/build.gradle.kts" -not -path "./.git/*" -not -path "*/__MACOSX/*" | head -1)
+        if [ -z "$GRADLE" ]; then
+          echo "V2rayNG/app/build.gradle.kts not found inside project.zip. Contents:"
+          find . -maxdepth 3 -not -path "./.git/*" | head -50
+          exit 1
+        fi
+        ROOT=$(dirname "$(dirname "$(dirname "$GRADLE")")")
+        echo "Project root: $ROOT"
+        echo "ROOT=$ROOT" >> $GITHUB_ENV
+
+    - name: Fetch hev-socks5-tunnel
+      run: |
+        rm -rf "$ROOT/hev-socks5-tunnel"
+        git clone --depth 1 --recursive --shallow-submodules https://github.com/heiher/hev-socks5-tunnel "$ROOT/hev-socks5-tunnel"
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v4
+      with:
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '14742923'
+        packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+    - name: Install NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;30.0.16248370"
+        echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> $GITHUB_ENV
+        sed -i '10i\
+        \
+            ndkVersion = "30.0.16248370"' "$ROOT/V2rayNG/app/build.gradle.kts"
+
+    - name: Build libhevtun
+      run: cd "$ROOT" && bash compile-hevtun.sh
+
+    - name: Copy libhevtun
+      run: cp -r "$ROOT/libs" "$ROOT/V2rayNG/app"
+
+    - name: Download libv2ray
+      uses: robinraju/release-downloader@v1.13
+      with:
+        repository: '2dust/AndroidLibXrayLite'
+        latest: true
+        fileName: 'libv2ray.aar'
+        out-file-path: ${{ env.ROOT }}/V2rayNG/app/libs/
+
+    - uses: actions/setup-java@v6.1.0
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+
+    - name: Build APK
+      run: |
+        cd "$ROOT/V2rayNG"
+        echo "sdk.dir=${ANDROID_HOME}" > local.properties
+        chmod 755 gradlew
+        ./gradlew assemblePlaystoreDebug
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: s0h1-apk
+        path: ${{ env.ROOT }}/V2rayNG/app/build/outputs/apk/playstore/debug/*.apk
